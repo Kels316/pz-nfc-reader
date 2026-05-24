@@ -5,34 +5,37 @@ nfc_reader.py — Main entry point for the PZTrack NFC vessel check-in reader.
 Hardware
 --------
   • Raspberry Pi (any model with I²C GPIO)
-  • Adafruit PN532 NFC/RFID breakout (I²C mode — set both DIP switches to ON)
+  • RC522 (MFRC522) NFC/RFID module (SPI)
   • SSD1306 128×64 OLED display (I²C)
   • Momentary push button
 
 Wiring
 ------
-  PN532  SDA  →  RPi GPIO 2  (pin 3)
-  PN532  SCL  →  RPi GPIO 3  (pin 5)
-  PN532  GND  →  RPi GND
-  PN532  VCC  →  RPi 3V3
+  RC522  VCC  →  RPi 3.3V    (pin 17)   *** 3.3V only — 5V will damage it ***
+  RC522  GND  →  RPi GND     (pin 20)
+  RC522  SDA  →  RPi GPIO 8  (pin 24)   SPI chip select
+  RC522  SCK  →  RPi GPIO 11 (pin 23)
+  RC522  MOSI →  RPi GPIO 10 (pin 19)
+  RC522  MISO →  RPi GPIO 9  (pin 21)
+  RC522  RST  →  RPi GPIO 25 (pin 22)
 
+  OLED   VCC  →  RPi 3.3V    (pin 17)   shared with RC522
+  OLED   GND  →  RPi GND     (pin 20)   shared with RC522
   OLED   SDA  →  RPi GPIO 2  (pin 3)
   OLED   SCL  →  RPi GPIO 3  (pin 5)
-  OLED   GND  →  RPi GND
-  OLED   VCC  →  RPi 3V3
 
   Button one leg  →  RPi GPIO 17 (pin 11)  [configurable in config.json]
   Button other leg→  RPi GND
   (internal pull-up is enabled — no external resistor needed)
 
-  Default I²C addresses: PN532 = 0x24, OLED = 0x3C
+  OLED I²C address: 0x3C
 
 Operation
 ---------
   Two-state interaction:
 
   STATE 1 — SCANNING
-    Polls the PN532 for a tag.
+    Polls the RC522 for a tag.
     On a scan: looks up the vessel in the DB, shows its current status,
     then enters STATE 2.
 
@@ -171,22 +174,14 @@ def main() -> None:
         display.show_error("DB Connect Failed")
         sys.exit(1)
 
-    # -- PN532 ---------------------------------------------------------------
-    logger.info("Initialising PN532 NFC reader (I²C)...")
+    # -- RC522 (SPI) ---------------------------------------------------------
+    logger.info("Initialising RC522 NFC reader (SPI)...")
     try:
-        import board
-        import busio
-        from adafruit_pn532.i2c import PN532_I2C
-
-        i2c = busio.I2C(board.SCL, board.SDA)
-        nfc_cfg = config.get("nfc", {})
-        pn532_address = int(nfc_cfg.get("i2c_address", "0x24"), 16)
-        pn532 = PN532_I2C(i2c, address=pn532_address, debug=False)
-        ic, ver, rev, support = pn532.firmware_version
-        logger.info("PN532 firmware v%s.%s detected.", ver, rev)
-        pn532.SAM_configuration()
+        from mfrc522 import SimpleMFRC522
+        nfc_reader = SimpleMFRC522()
+        logger.info("RC522 ready.")
     except Exception as exc:
-        logger.error("PN532 initialisation failed: %s", exc)
+        logger.error("RC522 initialisation failed: %s", exc)
         display.show_error("NFC Init Failed")
         db.close()
         sys.exit(1)
@@ -265,9 +260,11 @@ def main() -> None:
 
         # ---- Poll for a tag ------------------------------------------------
         try:
-            uid = pn532.read_passive_target(timeout=0.3)
+            uid_int, _ = nfc_reader.read_no_block()
+            # read_no_block() returns (None, None) when no tag is present
+            uid = uid_int.to_bytes(5, byteorder='big') if uid_int else None
         except Exception as exc:
-            logger.error("PN532 read error: %s", exc)
+            logger.error("RC522 read error: %s", exc)
             time.sleep(1)
             continue
 

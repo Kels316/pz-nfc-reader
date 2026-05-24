@@ -4,7 +4,7 @@ register_tag.py — Associate physical NFC tags with PZTrack trackers.
 
 What it does
 ------------
-Scans an NFC tag with the PN532 and writes its UID into the
+Scans an NFC tag with the RC522 and writes its UID into the
 trackers.t_rfid column of the PZTrack PostgreSQL database.
 
 Once a tag is registered, nfc_reader.py will recognise it immediately —
@@ -59,27 +59,20 @@ def init_db(config: dict):
     return db
 
 
-def init_pn532(config: dict):
-    import board
-    import busio
-    from adafruit_pn532.i2c import PN532_I2C
-
-    i2c = busio.I2C(board.SCL, board.SDA)
-    nfc_cfg = config.get("nfc", {})
-    address = int(nfc_cfg.get("i2c_address", "0x24"), 16)
-    pn532 = PN532_I2C(i2c, address=address, debug=False)
-    ic, ver, rev, support = pn532.firmware_version
-    print(f"  PN532 found — firmware v{ver}.{rev}")
-    pn532.SAM_configuration()
-    return pn532
+def init_rc522():
+    from mfrc522 import SimpleMFRC522
+    reader = SimpleMFRC522()
+    print("  RC522 ready.")
+    return reader
 
 
-def read_one_tag(pn532, timeout_secs: float = 30.0) -> bytes | None:
+def read_one_tag(reader, timeout_secs: float = 30.0) -> bytes | None:
     deadline = time.monotonic() + timeout_secs
     while time.monotonic() < deadline:
-        uid = pn532.read_passive_target(timeout=0.5)
-        if uid is not None:
-            return bytes(uid)
+        uid_int, _ = reader.read_no_block()
+        if uid_int is not None:
+            return uid_int.to_bytes(5, byteorder='big')
+        time.sleep(0.1)
     return None
 
 
@@ -146,7 +139,7 @@ def cmd_remove(db, dev_eui: str) -> None:
         sys.exit(1)
 
 
-def cmd_register(db, pn532, dev_eui: str | None) -> None:
+def cmd_register(db, rc522, dev_eui: str | None) -> None:
     trackers = db.get_all_trackers()
     if not trackers:
         print("No trackers found in the database.")
@@ -188,7 +181,7 @@ def cmd_register(db, pn532, dev_eui: str | None) -> None:
     )
     print("(Waiting up to 30 seconds — Ctrl+C to cancel)\n")
 
-    uid_bytes = read_one_tag(pn532)
+    uid_bytes = read_one_tag(rc522)
     if uid_bytes is None:
         print("No tag detected within timeout.")
         sys.exit(1)
@@ -270,15 +263,15 @@ def main() -> None:
             cmd_remove(db, args.dev_eui)
             return
 
-        # Registration — needs the PN532
-        print("Initialising PN532...")
+        # Registration — needs the RC522
+        print("Initialising RC522...")
         try:
-            pn532 = init_pn532(config)
+            reader = init_rc522()
         except Exception as exc:
-            print(f"PN532 initialisation failed: {exc}")
+            print(f"RC522 initialisation failed: {exc}")
             sys.exit(1)
 
-        cmd_register(db, pn532, args.dev_eui)
+        cmd_register(db, reader, args.dev_eui)  # reader is an RC522 SimpleMFRC522 instance
 
     finally:
         db.close()

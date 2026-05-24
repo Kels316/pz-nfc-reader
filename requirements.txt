@@ -2,13 +2,10 @@
 # Install inside the venv created by install.sh, or manually:
 #   pip install -r requirements.txt
 
-# Adafruit CircuitPython PN532 driver
-adafruit-circuitpython-pn532>=2.3.0
+# RC522 NFC/RFID reader (SPI)
+mfrc522>=0.0.7
 
-# Adafruit Blinka — CircuitPython compatibility layer for Raspberry Pi
-adafruit-blinka>=8.0.0
-
-# OLED display driver (SSD1306 via I²C)
+# OLED display driver (SSD1306/SSD1315 via I²C)
 luma.oled>=3.12.0
 
 # Image rendering for OLED

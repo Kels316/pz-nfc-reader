@@ -5,8 +5,8 @@
 #   sudo bash install.sh
 #
 # What this script does:
-#   1. Enables I²C in the kernel (raspi-config)
-#   2. Installs system packages (Python3, pip, I²C tools, fonts)
+#   1. Enables I²C and SPI in the kernel (raspi-config)
+#   2. Installs system packages (Python3, pip, I²C/SPI tools, fonts)
 #   3. Creates /opt/pz-nfc-reader and copies module files there
 #   4. Creates a Python venv and installs pip dependencies
 #   5. Installs and enables the systemd service
@@ -29,12 +29,13 @@ echo "=== PZTrack NFC Reader — installer ==="
 echo
 
 # ---------------------------------------------------------------------------
-# 1. Enable I²C
+# 1. Enable I²C and SPI
 # ---------------------------------------------------------------------------
-echo "[1/5] Enabling I²C interface..."
+echo "[1/5] Enabling I²C and SPI interfaces..."
 if command -v raspi-config &>/dev/null; then
     raspi-config nonint do_i2c 0
-    echo "    I²C enabled via raspi-config."
+    raspi-config nonint do_spi 0
+    echo "    I²C and SPI enabled via raspi-config."
 else
     # Fallback: edit /boot/config.txt directly
     if ! grep -q "^dtparam=i2c_arm=on" /boot/config.txt 2>/dev/null; then
@@ -42,6 +43,12 @@ else
         echo "    Added dtparam=i2c_arm=on to /boot/config.txt (reboot required)."
     else
         echo "    I²C already enabled in /boot/config.txt."
+    fi
+    if ! grep -q "^dtparam=spi=on" /boot/config.txt 2>/dev/null; then
+        echo "dtparam=spi=on" >> /boot/config.txt
+        echo "    Added dtparam=spi=on to /boot/config.txt (reboot required)."
+    else
+        echo "    SPI already enabled in /boot/config.txt."
     fi
 fi
 
@@ -56,6 +63,7 @@ apt-get install -y --no-install-recommends \
     python3-venv \
     python3-dev \
     i2c-tools \
+    python3-spidev \
     libjpeg-dev \
     zlib1g-dev \
     libfreetype6-dev \

@@ -20,8 +20,7 @@
   },
 
   "nfc": {
-    "_comment": "PN532 I²C address. Default is 0x24 for Adafruit breakout with both DIP switches ON.",
-    "i2c_address": "0x24"
+    "_comment": "RC522 uses SPI — no I²C address needed. This section is reserved for future use."
   },
 
   "display": {

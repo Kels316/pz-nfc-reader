@@ -10,28 +10,40 @@ Scanning a vessel's NFC tag displays its current status on the OLED. A button pr
 
 | Component | Details |
 |---|---|
-| Raspberry Pi | Any model with I²C GPIO |
-| NFC Reader | Adafruit PN532 NFC/RFID Breakout (I²C mode) |
-| Display | SSD1306 128×64 OLED (I²C) — GME12864-52 or equivalent |
+| Raspberry Pi | Any model with SPI and I²C GPIO |
+| NFC Reader | RC522 (MFRC522) NFC/RFID module (SPI) |
+| Display | SSD1306/SSD1315 128×64 OLED (I²C) — GME12864-52 or equivalent |
 | Button | Momentary push button |
 | Tags | Any ISO 14443A NFC tag (MIFARE, NTAG, etc.) |
 
 ### Wiring
 
-The PN532 and OLED share the same I²C bus.
+The RC522 uses SPI. The OLED uses I²C. They are on separate buses and do not interfere.
 
-| Signal | Pi Pin |
-|---|---|
-| SDA | GPIO 2 (pin 3) |
-| SCL | GPIO 3 (pin 5) |
-| GND | Any GND |
-| VCC | 3V3 |
+**RC522 (SPI) — ⚠️ 3.3V only, 5V will damage it**
+
+| RC522 Pin | Pi Pin | GPIO |
+|---|---|---|
+| VCC | Pin 17 | 3.3V |
+| GND | Pin 20 | GND |
+| SDA (SS) | Pin 24 | GPIO 8 |
+| SCK | Pin 23 | GPIO 11 |
+| MOSI | Pin 19 | GPIO 10 |
+| MISO | Pin 21 | GPIO 9 |
+| RST | Pin 22 | GPIO 25 |
+
+**OLED (I²C)**
+
+| OLED Pin | Pi Pin | GPIO |
+|---|---|---|
+| VCC | Pin 17 | 3.3V (shared) |
+| GND | Pin 20 | GND (shared) |
+| SDA | Pin 3 | GPIO 2 |
+| SCL | Pin 5 | GPIO 3 |
 
 **Button:** one leg to GPIO 17 (pin 11), other leg to GND. No resistor needed — internal pull-up is enabled. The GPIO pin is configurable in `config.json`.
 
-Set **both DIP switches ON** on the PN532 to enable I²C mode.
-
-Default I²C addresses: PN532 = `0x24`, OLED = `0x3C`
+OLED I²C address: `0x3C`
 
 ---
 
@@ -39,7 +51,7 @@ Default I²C addresses: PN532 = `0x24`, OLED = `0x3C`
 
 Two-step interaction to prevent accidental toggles:
 
-1. The PN532 continuously polls for NFC tags.
+1. The RC522 continuously polls for NFC tags.
 2. On a scan, the tag UID is looked up against `trackers.t_rfid` in the PZTrack PostgreSQL database.
 3. The OLED shows the vessel name and its **current status** — inverted (black on white) if ON WATER.
 4. The operator presses the button to confirm the toggle.
@@ -192,7 +204,7 @@ python3 register_tag.py --remove --dev-eui 6777570257507A01
     "port":   5432
   },
   "nfc": {
-    "i2c_address": "0x24"                 // PN532 I²C address
+    // RC522 uses SPI — no I²C address needed
   },
   "display": {
     "i2c_address": "0x3C",               // OLED I²C address
