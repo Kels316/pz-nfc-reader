@@ -2,7 +2,7 @@
 
 A Raspberry Pi module that reads NFC tags to check vessels on/off the water, interfacing with the [phasezero-tracker-api-server](https://github.com/wifi2work/phasezero-tracker-api-server) database and REST API.
 
-Scanning a vessel's NFC tag toggles its check-in state (`checked_in` ↔ `checked_out`) and displays the result on an OLED screen. The existing API server is never modified — this module only consumes its published endpoints and shares its PostgreSQL database.
+Scanning a vessel's NFC tag displays its current status on the OLED. A button press confirms the toggle. The existing API server is never modified — this module only consumes its published endpoints and shares its PostgreSQL database.
 
 ---
 
@@ -12,12 +12,13 @@ Scanning a vessel's NFC tag toggles its check-in state (`checked_in` ↔ `checke
 |---|---|
 | Raspberry Pi | Any model with I²C GPIO |
 | NFC Reader | Adafruit PN532 NFC/RFID Breakout (I²C mode) |
-| Display | SSD1306 128×64 OLED (I²C) |
+| Display | SSD1306 128×64 OLED (I²C) — GME12864-52 or equivalent |
+| Button | Momentary push button |
 | Tags | Any ISO 14443A NFC tag (MIFARE, NTAG, etc.) |
 
 ### Wiring
 
-Both the PN532 and OLED share the same I²C bus.
+The PN532 and OLED share the same I²C bus.
 
 | Signal | Pi Pin |
 |---|---|
@@ -25,6 +26,8 @@ Both the PN532 and OLED share the same I²C bus.
 | SCL | GPIO 3 (pin 5) |
 | GND | Any GND |
 | VCC | 3V3 |
+
+**Button:** one leg to GPIO 17 (pin 11), other leg to GND. No resistor needed — internal pull-up is enabled. The GPIO pin is configurable in `config.json`.
 
 Set **both DIP switches ON** on the PN532 to enable I²C mode.
 
@@ -34,13 +37,31 @@ Default I²C addresses: PN532 = `0x24`, OLED = `0x3C`
 
 ## How It Works
 
+Two-step interaction to prevent accidental toggles:
+
 1. The PN532 continuously polls for NFC tags.
 2. On a scan, the tag UID is looked up against `trackers.t_rfid` in the PZTrack PostgreSQL database.
-3. The current `checkin_state` is read from `latest_checkins_vw`.
-4. The state is toggled and posted to `POST /competitors/<id>/checkinstate` on the existing API server.
-5. The result is shown on the OLED — white-on-black for **OFF WATER**, black-on-white for **ON WATER**.
+3. The OLED shows the vessel name and its **current status** — inverted (black on white) if ON WATER.
+4. The operator presses the button to confirm the toggle.
+5. The new state is posted to `POST /competitors/<id>/checkinstate` on the existing API server.
+6. The OLED shows the updated status for 2 seconds, then returns to Ready.
 
-A configurable debounce window (default 3 seconds) prevents accidental double-toggles.
+Scanning a different tag while waiting cancels the pending action and shows the new vessel instead. The button has no effect unless a tag has just been scanned.
+
+---
+
+## OLED Screens
+
+| Screen | When shown |
+|---|---|
+| `Starting up...` | Boot |
+| `Ready / Scan vessel tag` | Idle |
+| `Tag Detected / Looking up...` | Tag scanned, DB lookup in progress |
+| Vessel name + `ON WATER` (inverted) | Waiting for button — vessel is on water |
+| Vessel name + `OFF WATER` | Waiting for button — vessel is off water |
+| Vessel name + new state + `Updated OK` | Confirmation after button press |
+| `Unknown Tag / Not registered` | Tag not in database |
+| `ERROR` (inverted) | Any failure |
 
 ---
 
@@ -48,7 +69,7 @@ A configurable debounce window (default 3 seconds) prevents accidental double-to
 
 | File | Purpose |
 |---|---|
-| `nfc_reader.py` | Main loop — reads tags, toggles state, drives display |
+| `nfc_reader.py` | Main loop — scan, display status, confirm with button |
 | `api_client.py` | HTTP wrapper for the PZTrack REST API |
 | `db_client.py` | Direct PostgreSQL access for tag lookups and registration |
 | `display_manager.py` | SSD1306 OLED screen management |
@@ -65,15 +86,15 @@ A configurable debounce window (default 3 seconds) prevents accidental double-to
 ### 1. Clone the repo on the Pi
 
 ```bash
-git clone https://github.com/Kels316/pz-nfc-reader.git /opt/pz-nfc-reader
+sudo git clone https://github.com/Kels316/pz-nfc-reader.git /opt/pz-nfc-reader
 cd /opt/pz-nfc-reader
 ```
 
 ### 2. Configure
 
 ```bash
-cp config.example.json config.json
-nano config.json
+sudo cp config.example.json config.json
+sudo nano config.json
 ```
 
 Set the following in `config.json`:
@@ -82,6 +103,7 @@ Set the following in `config.json`:
 - `api.password` — API password
 - `db.host` — PostgreSQL host
 - `db.password` — PostgreSQL password
+- `button.gpio_pin` — GPIO pin for the confirm button (default: 17)
 
 ### 3. Run the installer
 
@@ -97,7 +119,7 @@ This enables I²C, installs system packages, creates a Python venv, installs dep
 sudo -u pi /opt/pz-nfc-reader/venv/bin/python register_tag.py
 ```
 
-This fetches the competitor list from the database, lets you pick a vessel, then prompts you to scan its NFC tag. The UID is written to `trackers.t_rfid`. Repeat for each vessel.
+This fetches the vessel list from the database, lets you pick a vessel, then prompts you to scan its NFC tag. The UID is written to `trackers.t_rfid`. Repeat for each vessel.
 
 ### 5. Start the service
 
@@ -127,7 +149,7 @@ sudo systemctl stop pz-nfc-reader
 
 ```bash
 cd /opt/pz-nfc-reader
-git pull
+sudo git pull
 sudo systemctl restart pz-nfc-reader
 ```
 
@@ -177,6 +199,9 @@ python3 register_tag.py --remove --dev-eui 6777570257507A01
     "i2c_port": 1,
     "width": 128,
     "height": 64
+  },
+  "button": {
+    "gpio_pin": 17                        // GPIO pin for confirm button
   },
   "debounce_seconds": 3                   // Min seconds between scans of same tag
 }
