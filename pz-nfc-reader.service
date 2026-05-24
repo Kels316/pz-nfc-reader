@@ -11,6 +11,7 @@ Group=pi
 
 # Adjust this path if you installed the module elsewhere
 WorkingDirectory=/opt/pz-nfc-reader
+Environment="GPIOZERO_PIN_FACTORY=lgpio"
 ExecStart=/opt/pz-nfc-reader/venv/bin/python nfc_reader.py
 
 # Restart automatically on failure, but not if it exits cleanly

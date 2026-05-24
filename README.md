@@ -60,6 +60,10 @@ Two-step interaction to prevent accidental toggles:
 
 Scanning a different tag while waiting cancels the pending action and shows the new vessel instead. The button has no effect unless a tag has just been scanned.
 
+### Gateway Auto-Discovery
+
+Set `api.base_url` and `db.host` to `"auto"` in `config.json` (the default). On each boot the Pi reads its default route to find the gateway IP and probes the PZTrack API there. Since each LoRaWAN gateway is also the WiFi access point for "PZ Network", the gateway is always the default route IP on that network. If the gateway isn't reachable yet, the OLED shows a waiting message and retries every 5 seconds.
+
 ---
 
 ## OLED Screens
@@ -67,6 +71,7 @@ Scanning a different tag while waiting cancels the pending action and shows the 
 | Screen | When shown |
 |---|---|
 | `Starting up...` | Boot |
+| `Connecting... <IP>` | Waiting for gateway during auto-discovery |
 | `Ready / Scan vessel tag` | Idle |
 | `Tag Detected / Looking up...` | Tag scanned, DB lookup in progress |
 | Vessel name + `ON WATER` (inverted) | Waiting for button — vessel is on water |
@@ -85,11 +90,13 @@ Scanning a different tag while waiting cancels the pending action and shows the 
 | `api_client.py` | HTTP wrapper for the PZTrack REST API |
 | `db_client.py` | Direct PostgreSQL access for tag lookups and registration |
 | `display_manager.py` | SSD1306 OLED screen management |
+| `gateway_discovery.py` | Auto-discovers the PZTrack gateway via the default route |
 | `register_tag.py` | CLI utility to associate NFC tags with vessels |
-| `config.example.json` | Configuration template |
-| `requirements.txt` | Python dependencies |
-| `install.sh` | Raspberry Pi installation script |
+| `config.example.json` | Configuration template — copied to `config.json` by `install.sh` |
+| `requirements.txt` | Python dependencies (pip) |
+| `install.sh` | One-command Raspberry Pi installer |
 | `pz-nfc-reader.service` | systemd service unit |
+| `test_display.py` | Standalone OLED test — run this to verify display wiring |
 
 ---
 
@@ -102,43 +109,66 @@ sudo git clone https://github.com/Kels316/pz-nfc-reader.git /opt/pz-nfc-reader
 cd /opt/pz-nfc-reader
 ```
 
-### 2. Configure
-
-```bash
-sudo cp config.example.json config.json
-sudo nano config.json
-```
-
-Set the following in `config.json`:
-
-- `api.base_url` — URL of your running PZTrack API server
-- `api.password` — API password
-- `db.host` — PostgreSQL host
-- `db.password` — PostgreSQL password
-- `button.gpio_pin` — GPIO pin for the confirm button (default: 17)
-
-### 3. Run the installer
+### 2. Run the installer
 
 ```bash
 sudo bash install.sh
 ```
 
-This enables I²C, installs system packages, creates a Python venv, installs dependencies, and registers the systemd service.
+This will:
+- Enable I²C and SPI via `raspi-config`
+- Install all system packages including `python3-lgpio`, `python3-spidev`, and `python3-gpiozero`
+- Create a Python venv at `/opt/pz-nfc-reader/venv` with access to system GPIO libraries
+- Install pip dependencies from `requirements.txt`
+- Copy `config.example.json` → `config.json` (if no config exists yet)
+- Install and enable the systemd service
 
-### 4. Register vessel NFC tags
+### 3. Edit the config
 
 ```bash
-sudo -u pi /opt/pz-nfc-reader/venv/bin/python register_tag.py
+sudo nano /opt/pz-nfc-reader/config.json
+```
+
+Set:
+- `db.password` — PostgreSQL password for the `loratracker` user
+- `api.password` — PZTrack API password (if changed from the default)
+
+`api.base_url` and `db.host` are both `"auto"` by default, which auto-discovers the gateway. Leave these as-is for normal PZ Network use.
+
+### 4. Reboot (if prompted)
+
+If `install.sh` reports that a reboot is required to activate I²C/SPI:
+
+```bash
+sudo reboot
+```
+
+### 5. Register vessel NFC tags
+
+```bash
+sudo -u pi /opt/pz-nfc-reader/venv/bin/python /opt/pz-nfc-reader/register_tag.py
 ```
 
 This fetches the vessel list from the database, lets you pick a vessel, then prompts you to scan its NFC tag. The UID is written to `trackers.t_rfid`. Repeat for each vessel.
 
-### 5. Start the service
+### 6. Start the service
 
 ```bash
 sudo systemctl start pz-nfc-reader
 sudo systemctl status pz-nfc-reader
 ```
+
+---
+
+## Testing the Display
+
+To verify the OLED is wired and working independently of the full stack:
+
+```bash
+/opt/pz-nfc-reader/venv/bin/python /opt/pz-nfc-reader/test_display.py
+```
+
+Shows a test pattern for 5 seconds, then an inverted "ON WATER" screen, then clears.
 
 ---
 
@@ -192,30 +222,31 @@ python3 register_tag.py --remove --dev-eui 6777570257507A01
 ```jsonc
 {
   "api": {
-    "base_url": "http://localhost:5000",  // PZTrack API server URL
+    "base_url": "auto",       // "auto" = discover gateway, or set e.g. "http://192.168.4.1:5000"
     "username": "admin",
     "password": "..."
   },
+  "api_port": 5000,           // PZTrack API port (used for gateway discovery)
   "db": {
-    "dbname": "loratracker",              // PostgreSQL database name
+    "dbname": "loratracker",
     "user":   "loratracker",
     "password": "...",
-    "host":   "localhost",
-    "port":   5432
+    "host":   "auto",         // "auto" = same discovered gateway IP
+    "port":   5433            // PZTrack Docker default
   },
   "nfc": {
-    // RC522 uses SPI — no I²C address needed
+    // RC522 uses SPI — no address needed. Reserved for future use.
   },
   "display": {
-    "i2c_address": "0x3C",               // OLED I²C address
+    "i2c_address": "0x3C",   // OLED I²C address
     "i2c_port": 1,
     "width": 128,
     "height": 64
   },
   "button": {
-    "gpio_pin": 17                        // GPIO pin for confirm button
+    "gpio_pin": 17            // GPIO pin for confirm button (BCM numbering)
   },
-  "debounce_seconds": 3                   // Min seconds between scans of same tag
+  "debounce_seconds": 3       // Min seconds between scans of the same tag
 }
 ```
 
