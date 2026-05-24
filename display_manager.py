@@ -144,6 +144,27 @@ class DisplayManager:
             ]
         )
 
+    def show_current_status(self, craft_name: str, current_state: str | None) -> None:
+        """
+        Shown after a tag scan, while waiting for the button press.
+        Displays the vessel name, its current state, and a prompt.
+        """
+        name = craft_name[:14] if len(craft_name) > 14 else craft_name
+        if current_state == "checked_in":
+            state_label = "ON WATER"
+        elif current_state == "checked_out":
+            state_label = "OFF WATER"
+        else:
+            state_label = "UNKNOWN"
+        self._render(
+            [
+                (name, self.font_large, 4),
+                (state_label, self.font_large, 24),
+                ("Press to toggle", self.font_small, 50),
+            ],
+            invert=(current_state == "checked_in"),
+        )
+
     def show_success(self, craft_name: str, new_state: str) -> None:
         """
         Confirmation screen after a successful state toggle.

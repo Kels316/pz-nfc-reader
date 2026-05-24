@@ -7,39 +7,47 @@ Hardware
   • Raspberry Pi (any model with I²C GPIO)
   • Adafruit PN532 NFC/RFID breakout (I²C mode — set both DIP switches to ON)
   • SSD1306 128×64 OLED display (I²C)
+  • Momentary push button
 
-Wiring (I²C — both devices share the same bus)
------------------------------------------------
+Wiring
+------
   PN532  SDA  →  RPi GPIO 2  (pin 3)
   PN532  SCL  →  RPi GPIO 3  (pin 5)
   PN532  GND  →  RPi GND
   PN532  VCC  →  RPi 3V3
+
   OLED   SDA  →  RPi GPIO 2  (pin 3)
   OLED   SCL  →  RPi GPIO 3  (pin 5)
   OLED   GND  →  RPi GND
   OLED   VCC  →  RPi 3V3
 
-  Default I²C addresses: PN532 = 0x24, OLED (SSD1306) = 0x3C
+  Button one leg  →  RPi GPIO 17 (pin 11)  [configurable in config.json]
+  Button other leg→  RPi GND
+  (internal pull-up is enabled — no external resistor needed)
+
+  Default I²C addresses: PN532 = 0x24, OLED = 0x3C
 
 Operation
 ---------
-  1. Reads config.json for API URL, DB credentials, display settings.
-  2. Connects directly to the PZTrack PostgreSQL database.
-  3. Logs in to the PZTrack REST API (for state writes only).
-  4. Continuously polls the PN532 for a tag.
-  5. On a scan:
-       a. Query DB: find competitor whose tracker has this NFC tag UID
-          stored in trackers.t_rfid.
-       b. Determine current checkin_state from latest_checkins_vw.
-       c. Toggle the state (checked_in ↔ checked_out).
-       d. POST /competitors/<id>/checkinstate to the existing API
-          (so the server's sync queue and business logic run normally).
-       e. Show the result on the OLED.
-  6. A debounce window (default 3 s) prevents accidental double-toggles.
+  Two-state interaction:
+
+  STATE 1 — SCANNING
+    Polls the PN532 for a tag.
+    On a scan: looks up the vessel in the DB, shows its current status,
+    then enters STATE 2.
+
+  STATE 2 — CONFIRMING
+    Shows the vessel name, current state, and "Press button to toggle".
+    Waits indefinitely for either:
+      • Button press  → toggle the state via the API, show confirmation,
+                        return to STATE 1.
+      • New tag scan  → immediately look up the new vessel and stay in
+                        STATE 2 (operator scanned the wrong tag).
+      • Shutdown signal → exit cleanly.
 
 The existing phasezero-tracker-api-server is never modified — this module
-only adds a read path to the shared database (via trackers.t_rfid) and
-calls the server's published REST endpoints for all state changes.
+only reads trackers.t_rfid from the shared database and calls the server's
+published REST endpoints for all state changes.
 
 Use register_tag.py to associate physical NFC tags with trackers by
 writing their UIDs into trackers.t_rfid.
@@ -65,7 +73,7 @@ try:
         RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=3)
     )
 except PermissionError:
-    pass  # no /var/log write access — console only
+    pass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,9 +89,6 @@ from api_client import APIError, PZTrackClient
 from db_client import DBClient
 from display_manager import DisplayManager
 
-# ---------------------------------------------------------------------------
-# Config path
-# ---------------------------------------------------------------------------
 _BASE_DIR = Path(__file__).parent
 CONFIG_FILE = _BASE_DIR / "config.json"
 
@@ -94,7 +99,6 @@ def load_config() -> dict:
 
 
 def uid_to_bytes(uid) -> bytes:
-    """Convert PN532 UID (bytearray or bytes) to plain bytes."""
     return bytes(uid)
 
 
@@ -116,6 +120,19 @@ def main() -> None:
         i2c_port=disp_cfg.get("i2c_port", 1),
     )
     display.show_startup()
+
+    # -- Button --------------------------------------------------------------
+    btn_cfg = config.get("button", {})
+    gpio_pin = btn_cfg.get("gpio_pin", 17)
+    logger.info("Initialising button on GPIO %s...", gpio_pin)
+    try:
+        from gpiozero import Button
+        button = Button(gpio_pin, pull_up=True, bounce_time=0.05)
+        logger.info("Button ready on GPIO %s.", gpio_pin)
+    except Exception as exc:
+        logger.error("Button initialisation failed: %s", exc)
+        display.show_error("Button Init Failed")
+        sys.exit(1)
 
     # -- Database ------------------------------------------------------------
     db_cfg = config["db"]
@@ -154,7 +171,7 @@ def main() -> None:
         db.close()
         sys.exit(1)
 
-    # -- API (for state writes only) -----------------------------------------
+    # -- API (state writes only) ---------------------------------------------
     api_cfg = config["api"]
     api = PZTrackClient(
         base_url=api_cfg["base_url"],
@@ -171,8 +188,6 @@ def main() -> None:
         db.close()
         sys.exit(1)
 
-    debounce_secs: float = config.get("debounce_seconds", 3.0)
-
     # -- Graceful shutdown ---------------------------------------------------
     running = True
 
@@ -184,89 +199,109 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    # -- Main loop -----------------------------------------------------------
-    display.show_ready()
-    logger.info("Ready. Waiting for NFC tags...")
-
-    last_uid_bytes: bytes | None = None
-    last_scan_time: float = 0.0
-
-    while running:
-        try:
-            uid = pn532.read_passive_target(timeout=0.5)
-        except Exception as exc:
-            logger.error("PN532 read error: %s", exc)
-            time.sleep(1)
-            continue
-
-        if uid is None:
-            continue
-
-        uid_bytes = uid_to_bytes(uid)
-        now = time.monotonic()
-
-        # Debounce — ignore the same tag within the window
-        if uid_bytes == last_uid_bytes and (now - last_scan_time) < debounce_secs:
-            continue
-
-        last_uid_bytes = uid_bytes
-        last_scan_time = now
-
-        logger.info("Tag scanned: %s", uid_bytes.hex().upper())
+    # -- Helper: look up a tag and return competitor dict or None ------------
+    def lookup_tag(uid_bytes: bytes) -> dict | None:
         display.show_scanning(uid_bytes.hex())
-
-        # ---- 1. Look up competitor in the database --------------------------
         try:
-            competitor = db.find_competitor_by_rfid(uid_bytes)
+            return db.find_competitor_by_rfid(uid_bytes)
         except Exception as exc:
             logger.error("Database lookup failed: %s", exc)
             display.show_error("DB Lookup Error")
             time.sleep(2)
-            display.show_ready()
-            continue
+            return None
 
-        if competitor is None:
-            logger.warning(
-                "No tracker with t_rfid = %s. "
-                "Use register_tag.py to associate this tag.",
-                uid_bytes.hex().upper(),
-            )
-            display.show_unknown_tag(uid_bytes.hex())
-            time.sleep(2)
-            display.show_ready()
-            continue
+    # -- Helper: perform the state toggle via API ----------------------------
+    def toggle_state(competitor: dict) -> None:
+        competitor_id = competitor["competitorId"]
+        craft_name    = competitor["craftName"] or competitor_id
+        current_state = competitor["checkinState"]
 
-        competitor_id: str = competitor["competitorId"]
-        craft_name: str    = competitor["craftName"] or competitor_id
-        current_state      = competitor["checkinState"]  # may be None
-
-        # ---- 2. Determine new state -----------------------------------------
-        if current_state == "checked_in":
-            new_state = "checked_out"
-        else:
-            # None (never checked in) or "checked_out" → check in
-            new_state = "checked_in"
+        new_state = "checked_out" if current_state == "checked_in" else "checked_in"
 
         logger.info(
             "Vessel '%s' (%s): %s → %s",
             craft_name, competitor_id, current_state, new_state,
         )
-
-        # ---- 3. POST new state via the existing API -------------------------
-        #  Using the API (not a direct DB write) ensures the server's sync
-        #  queue and any other business logic run exactly as normal.
         try:
             api.set_checkin_state(competitor_id, new_state)
             logger.info("State updated successfully.")
             display.show_success(craft_name, new_state)
         except APIError as exc:
-            logger.error(
-                "Failed to update state for '%s': %s", competitor_id, exc
-            )
+            logger.error("Failed to update state for '%s': %s", competitor_id, exc)
             display.show_error("Update Failed")
-
         time.sleep(2)
-        display.show_ready()
+
+    # -----------------------------------------------------------------------
+    # STATE 1 — SCANNING
+    # -----------------------------------------------------------------------
+    display.show_ready()
+    logger.info("Ready. Waiting for NFC tags...")
+
+    pending_competitor: dict | None = None   # set when in CONFIRMING state
+    last_uid_bytes: bytes | None = None
+    last_scan_time: float = 0.0
+    debounce_secs: float = config.get("debounce_seconds", 3.0)
+
+    while running:
+
+        # ---- Poll for a tag ------------------------------------------------
+        try:
+            uid = pn532.read_passive_target(timeout=0.3)
+        except Exception as exc:
+            logger.error("PN532 read error: %s", exc)
+            time.sleep(1)
+            continue
+
+        if uid is not None:
+            uid_bytes = uid_to_bytes(uid)
+            now = time.monotonic()
+
+            # Suppress same-tag noise only when NOT already in confirm state
+            if pending_competitor is None:
+                if uid_bytes == last_uid_bytes and (now - last_scan_time) < debounce_secs:
+                    uid = None  # treat as no scan this iteration
+                else:
+                    last_uid_bytes = uid_bytes
+                    last_scan_time = now
+
+        if uid is not None:
+            uid_bytes = uid_to_bytes(uid)
+            logger.info("Tag scanned: %s", uid_bytes.hex().upper())
+
+            competitor = lookup_tag(uid_bytes)
+
+            if competitor is None:
+                # Unknown tag or DB error — already handled in lookup_tag
+                logger.warning(
+                    "No tracker found for tag %s.", uid_bytes.hex().upper()
+                )
+                display.show_unknown_tag(uid_bytes.hex())
+                time.sleep(2)
+                pending_competitor = None
+                display.show_ready()
+                continue
+
+            # ----------------------------------------------------------------
+            # STATE 2 — CONFIRMING
+            # Show current status and wait for button press
+            # ----------------------------------------------------------------
+            pending_competitor = competitor
+            craft_name    = competitor["craftName"] or competitor["competitorId"]
+            current_state = competitor["checkinState"]
+
+            logger.info(
+                "Showing status for '%s' (%s): %s. Waiting for button.",
+                craft_name, competitor["competitorId"], current_state,
+            )
+            display.show_current_status(craft_name, current_state)
+            # Fall through to button check below on next iterations
+
+        # ---- Check button (only meaningful in CONFIRMING state) ------------
+        if pending_competitor is not None and button.is_pressed:
+            toggle_state(pending_competitor)
+            pending_competitor = None
+            last_uid_bytes = None   # reset debounce so same tag can re-scan
+            display.show_ready()
 
     # -- Shutdown ------------------------------------------------------------
     display.show_shutdown()

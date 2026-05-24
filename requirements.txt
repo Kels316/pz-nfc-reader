@@ -19,3 +19,6 @@ requests>=2.31.0
 
 # PostgreSQL driver (binary wheel — no libpq-dev build required on the Pi)
 psycopg2-binary>=2.9.0
+
+# GPIO button support (pre-installed on Raspberry Pi OS, listed here for completeness)
+gpiozero>=2.0

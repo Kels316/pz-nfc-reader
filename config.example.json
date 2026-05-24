@@ -30,5 +30,10 @@
     "height": 64
   },
 
+  "button": {
+    "_comment": "GPIO pin number for the confirm button. Wire between this pin and GND.",
+    "gpio_pin": 17
+  },
+
   "debounce_seconds": 3
 }
