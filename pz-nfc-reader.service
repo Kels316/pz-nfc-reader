@@ -1,0 +1,32 @@
+[Unit]
+Description=PZTrack NFC Vessel Check-in Reader
+Documentation=https://github.com/wifi2work/phasezero-tracker-api-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+# Adjust this path if you installed the module elsewhere
+WorkingDirectory=/opt/pz-nfc-reader
+ExecStart=/opt/pz-nfc-reader/venv/bin/python nfc_reader.py
+
+# Restart automatically on failure, but not if it exits cleanly
+Restart=on-failure
+RestartSec=5s
+
+# Give the process time to shut down gracefully (OLED clear, log flush)
+TimeoutStopSec=10s
+
+# Log to the systemd journal (view with: journalctl -u pz-nfc-reader -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pz-nfc-reader
+
+# Allow access to I²C devices
+SupplementaryGroups=i2c gpio spi
+
+[Install]
+WantedBy=multi-user.target

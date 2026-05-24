@@ -1,0 +1,21 @@
+# PZTrack NFC Reader — Python dependencies
+# Install inside the venv created by install.sh, or manually:
+#   pip install -r requirements.txt
+
+# Adafruit CircuitPython PN532 driver
+adafruit-circuitpython-pn532>=2.3.0
+
+# Adafruit Blinka — CircuitPython compatibility layer for Raspberry Pi
+adafruit-blinka>=8.0.0
+
+# OLED display driver (SSD1306 via I²C)
+luma.oled>=3.12.0
+
+# Image rendering for OLED
+Pillow>=10.0.0
+
+# HTTP client for PZTrack REST API
+requests>=2.31.0
+
+# PostgreSQL driver (binary wheel — no libpq-dev build required on the Pi)
+psycopg2-binary>=2.9.0

@@ -1,0 +1,34 @@
+{
+  "_comment": "Copy this file to config.json and fill in your values. config.json is gitignored.",
+
+  "api": {
+    "_comment": "URL and credentials for the running phasezero-tracker-api-server.",
+    "base_url": "http://localhost:5000",
+    "username": "admin",
+    "password": "YOUR_API_PASSWORD"
+  },
+
+  "db": {
+    "_comment": "PostgreSQL connection — same database used by the PZTrack API server.",
+    "dbname": "loratracker",
+    "user": "loratracker",
+    "password": "YOUR_DB_PASSWORD",
+    "host": "localhost",
+    "port": 5432
+  },
+
+  "nfc": {
+    "_comment": "PN532 I²C address. Default is 0x24 for Adafruit breakout with both DIP switches ON.",
+    "i2c_address": "0x24"
+  },
+
+  "display": {
+    "_comment": "SSD1306 OLED settings. Most common address is 0x3C.",
+    "i2c_address": "0x3C",
+    "i2c_port": 1,
+    "width": 128,
+    "height": 64
+  },
+
+  "debounce_seconds": 3
+}

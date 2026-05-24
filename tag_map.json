@@ -1,0 +1,7 @@
+{
+  "_comment": "Maps NFC tag UIDs (lowercase hex, no spaces) to PZTrack competitor IDs.",
+  "_comment2": "Run register_tag.py to add entries here — do not edit manually unless necessary.",
+  "_example": {
+    "04a1b2c3d4": "186"
+  }
+}
