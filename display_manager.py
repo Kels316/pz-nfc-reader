@@ -123,6 +123,16 @@ class DisplayManager:
             ]
         )
 
+    def show_connecting(self, gateway_ip: str) -> None:
+        """Shown during gateway discovery while probing a candidate IP."""
+        self._render(
+            [
+                ("Connecting...", self.font_large, 10),
+                (gateway_ip, self.font_small, 34),
+                ("Finding gateway", self.font_small, 48),
+            ]
+        )
+
     def show_ready(self) -> None:
         """Idle state — waiting for a tag scan."""
         self._render(

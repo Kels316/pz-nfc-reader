@@ -2,19 +2,21 @@
   "_comment": "Copy this file to config.json and fill in your values. config.json is gitignored.",
 
   "api": {
-    "_comment": "URL and credentials for the running phasezero-tracker-api-server.",
-    "base_url": "http://localhost:5000",
+    "_comment": "Set base_url to 'auto' to discover the gateway automatically via the default route (recommended for PZ Network). Or set a fixed URL e.g. http://192.168.4.1:5000",
+    "base_url": "auto",
     "username": "admin",
     "password": "YOUR_API_PASSWORD"
   },
 
+  "api_port": 5000,
+
   "db": {
-    "_comment": "PostgreSQL connection — same database used by the PZTrack API server.",
+    "_comment": "Set host to 'auto' to use the same discovered gateway IP (recommended). Port 5433 is the PZTrack Docker default.",
     "dbname": "loratracker",
     "user": "loratracker",
     "password": "YOUR_DB_PASSWORD",
-    "host": "localhost",
-    "port": 5432
+    "host": "auto",
+    "port": 5433
   },
 
   "nfc": {

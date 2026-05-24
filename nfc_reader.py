@@ -88,6 +88,7 @@ logger = logging.getLogger(__name__)
 from api_client import APIError, PZTrackClient
 from db_client import DBClient
 from display_manager import DisplayManager
+from gateway_discovery import resolve as resolve_gateway
 
 _BASE_DIR = Path(__file__).parent
 CONFIG_FILE = _BASE_DIR / "config.json"
@@ -134,16 +135,35 @@ def main() -> None:
         display.show_error("Button Init Failed")
         sys.exit(1)
 
+    # -- Gateway discovery ---------------------------------------------------
+    # If api.base_url or db.host is set to "auto", discover the gateway by
+    # reading the default route — whichever PZ Network gateway the Pi is
+    # connected to will always be the default gateway IP on that LAN.
+    api_cfg = config["api"]
+    db_cfg  = config["db"]
+    api_port = int(config.get("api_port", 5000))
+
+    raw_api_url = api_cfg.get("base_url", "auto")
+    raw_db_host = db_cfg.get("host", "auto")
+
+    if raw_api_url == "auto" or raw_db_host == "auto":
+        logger.info("Gateway set to 'auto' — discovering via default route...")
+        api_base_url = resolve_gateway(raw_api_url, "api_url", api_port, display)
+        db_host      = resolve_gateway(raw_db_host, "db_host", api_port, display)
+        logger.info("Using gateway: API=%s  DB=%s", api_base_url, db_host)
+    else:
+        api_base_url = raw_api_url
+        db_host      = raw_db_host
+
     # -- Database ------------------------------------------------------------
-    db_cfg = config["db"]
     db = DBClient(
         dbname=db_cfg["dbname"],
         user=db_cfg["user"],
         password=db_cfg.get("password"),
-        host=db_cfg["host"],
-        port=db_cfg.get("port", 5432),
+        host=db_host,
+        port=db_cfg.get("port", 5433),
     )
-    logger.info("Connecting to database...")
+    logger.info("Connecting to database at %s...", db_host)
     try:
         db.connect()
     except Exception as exc:
@@ -172,9 +192,8 @@ def main() -> None:
         sys.exit(1)
 
     # -- API (state writes only) ---------------------------------------------
-    api_cfg = config["api"]
     api = PZTrackClient(
-        base_url=api_cfg["base_url"],
+        base_url=api_base_url,
         username=api_cfg["username"],
         password=api_cfg["password"],
     )
